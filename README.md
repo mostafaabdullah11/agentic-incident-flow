@@ -37,14 +37,25 @@ Payload Validation
 Duplicate Guard
     |
     v
-202 Accepted
+Background Task
+    |
+    +----> 202 Accepted returned quickly
+    |
+    v
+Knowledge Base + Prompt
+    |
+    v
+Gemini
+    |
+    v
+respond / ask / escalate
 ```
 
-Gemini decision logic and ServiceNow write-back will be added in later phases.
+ServiceNow write-back will be added in Phase 4.
 
 ## Current Status
 
-Phase 2 — ServiceNow inbound integration.
+Phase 3 — Gemini decision engine completed.
 
 Currently implemented:
 
@@ -54,16 +65,26 @@ Currently implemented:
 - Incident payload validation
 - `202 Accepted` response for valid incidents
 - Clear validation errors for invalid payloads
-- ngrok public tunnel
 - ServiceNow Business Rule trigger
+- ngrok public tunnel
 - Automatic ServiceNow → FastAPI incident delivery
 - In-memory duplicate incident protection
+- Gemini API integration
+- Knowledge-base loading and validation
+- Prompt-based `respond`, `ask`, or `escalate` decisions
+- Structured Gemini response validation
+- Retry handling for temporary Gemini API failures
+- Background incident processing
+- Automated validation of the three required incident cases
+
+ServiceNow write-back will be added in the next phase.
 
 ## Requirements
 
 - Python 3.11+
 - ServiceNow Personal Developer Instance (PDI)
 - ngrok account and application
+- Gemini API key
 
 ## Local Setup
 
@@ -145,7 +166,7 @@ Example request:
 }
 ```
 
-A valid incident returns HTTP:
+A valid new incident returns HTTP:
 
 ```text
 202 Accepted
@@ -219,7 +240,7 @@ Example:
 https://example.ngrok-free.app/webhook
 ```
 
-The Business Rule sends the newly created incident to the FastAPI service automatically.
+The Business Rule sends each newly created ServiceNow incident to the FastAPI webhook automatically.
 
 ## Incident Payload
 
@@ -260,6 +281,114 @@ If the same incident is received more than once:
 
 The duplicate guard is stored only in memory and resets if the Python service restarts.
 
+## Gemini Configuration
+
+The project uses the Gemini API for incident decisions.
+
+Create a `.env` file based on `.env.example`.
+
+Required Gemini variables:
+
+```env
+GEMINI_API_KEY=
+GEMINI_MODEL=
+```
+
+- `GEMINI_API_KEY` is your private Gemini API key.
+- `GEMINI_MODEL` is the Gemini model used by the service.
+
+The real `.env` file must not be committed to Git.
+
+## AI Decisions
+
+Gemini receives:
+
+- the ServiceNow incident
+- the five supplied knowledge-base articles
+- the decision rules from `prompt.txt`
+
+The model must return exactly one of:
+
+- `respond`
+- `ask`
+- `escalate`
+
+### Respond
+
+Used when a supplied knowledge-base article clearly covers the issue and the ticket contains enough information to apply the solution.
+
+### Ask
+
+Used when a knowledge-base article may apply, but the incident is too vague or incomplete to determine that confidently.
+
+### Escalate
+
+Used when none of the supplied knowledge-base articles covers the issue.
+
+Gemini is instructed to use only the provided knowledge base.
+
+## Knowledge Base
+
+The approved knowledge base is stored in:
+
+```text
+data/kb_articles.json
+```
+
+It contains five articles covering:
+
+1. Printer not printing
+2. Email not sending
+3. Cannot access system
+4. Slow network
+5. Browser pages not loading
+
+The Gemini prompt must use these articles and no other knowledge source.
+
+## Gemini Prompt
+
+The exact prompt sent to Gemini is stored in:
+
+```text
+prompt.txt
+```
+
+The prompt defines:
+
+- knowledge-base restrictions
+- `respond`, `ask`, and `escalate` rules
+- JSON output requirements
+- the incident and knowledge-base placeholders
+
+## Decision Tests
+
+The required test incidents are stored in:
+
+```text
+data/test_incidents.json
+```
+
+Run:
+
+```bash
+python -m tests.test_decisions
+```
+
+Expected decisions:
+
+| Incident | Expected Decision |
+| --- | --- |
+| Printer not printing after office move | `respond` |
+| Cannot send email / vague description | `ask` |
+| Annual leave approval request | `escalate` |
+
+A successful run should report:
+
+```text
+Passed: 3
+Failed: 0
+```
+
 ## Current Testing
 
 ### Valid Payload
@@ -294,7 +423,7 @@ Sending the same `incident_sys_id` again should return:
 
 ### ServiceNow Integration
 
-A new incident created in ServiceNow should follow this path:
+A new incident created in ServiceNow follows this path:
 
 ```text
 ServiceNow
@@ -305,12 +434,34 @@ ngrok
     ↓
 FastAPI /webhook
     ↓
-Payload validated
+Payload Validation
     ↓
-202 Accepted
+Duplicate Guard
+    ↓
+Background Processing
+    ↓
+Gemini Decision
 ```
 
 The ServiceNow → ngrok → FastAPI connection has been tested successfully.
+
+### Gemini Decision Testing
+
+The current decision engine is tested against the three required cases:
+
+```text
+Printer issue
+    ↓
+respond
+
+Vague email issue
+    ↓
+ask
+
+Annual leave request
+    ↓
+escalate
+```
 
 ## Environment Variables
 
@@ -318,6 +469,7 @@ The project uses the following environment variables:
 
 ```text
 GEMINI_API_KEY=
+GEMINI_MODEL=
 SERVICENOW_INSTANCE_URL=
 SERVICENOW_USERNAME=
 SERVICENOW_PASSWORD=
@@ -331,7 +483,17 @@ Real secrets must be stored in:
 
 The `.env` file must not be committed to GitHub.
 
-The `.env.example` file contains only the required variable names and can safely be committed.
+The `.env.example` file should contain:
+
+```env
+GEMINI_API_KEY=
+GEMINI_MODEL=
+SERVICENOW_INSTANCE_URL=
+SERVICENOW_USERNAME=
+SERVICENOW_PASSWORD=
+```
+
+The `.env.example` file contains only variable names and can safely be committed.
 
 ## Security
 
@@ -346,12 +508,11 @@ Sensitive values should only be stored locally in environment variables.
 
 ## Next Steps
 
-Later phases will add:
+Phase 4 will add:
 
-- Gemini API integration
-- AI incident decision logic
-- `respond`, `ask`, and `escalate` decisions
-- ServiceNow incident write-back
-- additional automated testing
-- complete end-to-end validation
+- ServiceNow REST API write-back
+- writing Gemini decisions to the same ServiceNow incident
+- work notes and assignment updates
+- complete end-to-end flow
+- final integration testing
 - final architecture documentation
