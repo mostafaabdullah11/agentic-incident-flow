@@ -4,80 +4,79 @@ A small AI-powered incident automation service.
 
 ## Project Goal
 
-The completed system will:
+The system:
 
-1. Receive a newly created ServiceNow incident.
-2. Validate the incident payload.
-3. Ask Gemini to choose one decision:
+1. Receives a newly created ServiceNow incident.
+2. Validates the incident payload.
+3. Uses Gemini to choose one decision:
    - respond
    - ask
    - escalate
-4. Write the result back to the same ServiceNow incident.
+4. Writes the result back to the same ServiceNow incident.
 
 ## Architecture
 
-Current flow:
-
 ```text
-ServiceNow PDI
-    |
-    v
+ServiceNow Incident
+        |
+        v
 Business Rule
-    |
-    v
+        |
+        v
 ngrok
-    |
-    v
+        |
+        v
 FastAPI POST /webhook
-    |
-    v
-Payload Validation
-    |
-    v
-Duplicate Guard
-    |
-    v
-Background Task
-    |
-    +----> 202 Accepted returned quickly
-    |
-    v
-Knowledge Base + Prompt
-    |
-    v
+        |
+        +----> Validate payload
+        |
+        +----> Duplicate protection
+        |
+        +----> Return 202 Accepted
+        |
+        v
+Background processing
+        |
+        v
+Five supplied KB articles
+        +
+Gemini prompt
+        |
+        v
 Gemini
-    |
-    v
+        |
+        v
 respond / ask / escalate
+        |
+        v
+ServiceNow REST API PATCH
+        |
+        v
+Same incident updated
 ```
-
-ServiceNow write-back will be added in Phase 4.
 
 ## Current Status
 
-Phase 3 — Gemini decision engine completed.
+The complete Agentic Incident Flow is implemented.
 
-Currently implemented:
+The system now supports:
 
-- FastAPI application
-- Health/root endpoint
-- `POST /webhook`
+- ServiceNow incident creation trigger
+- Automatic Business Rule webhook delivery
+- FastAPI `POST /webhook`
 - Incident payload validation
-- `202 Accepted` response for valid incidents
-- Clear validation errors for invalid payloads
-- ServiceNow Business Rule trigger
-- ngrok public tunnel
-- Automatic ServiceNow → FastAPI incident delivery
-- In-memory duplicate incident protection
-- Gemini API integration
-- Knowledge-base loading and validation
-- Prompt-based `respond`, `ask`, or `escalate` decisions
-- Structured Gemini response validation
-- Retry handling for temporary Gemini API failures
+- Fast `202 Accepted` response
 - Background incident processing
-- Automated validation of the three required incident cases
-
-ServiceNow write-back will be added in the next phase.
+- In-memory duplicate protection
+- Gemini decision engine
+- Five-article knowledge-base grounding
+- Structured `respond`, `ask`, or `escalate` output
+- Retry handling for temporary Gemini API failures
+- Automatic ServiceNow REST API write-back
+- Customer-visible clarification comments
+- Internal escalation work notes
+- Automatic resolution for supported incidents
+- Required three decision tests
 
 ## Requirements
 
@@ -166,7 +165,7 @@ Example request:
 }
 ```
 
-A valid new incident returns HTTP:
+A valid new incident returns:
 
 ```text
 202 Accepted
@@ -178,12 +177,6 @@ Start the FastAPI service:
 
 ```bash
 uvicorn main:app --reload
-```
-
-The service runs locally at:
-
-```text
-http://127.0.0.1:8000
 ```
 
 In another terminal, start ngrok:
@@ -204,7 +197,7 @@ The public webhook URL is:
 https://example.ngrok-free.app/webhook
 ```
 
-The ngrok URL may change when ngrok is restarted. If it changes, update the ServiceNow Business Rule endpoint so that it uses the current ngrok URL.
+The ngrok URL may change when ngrok is restarted. If it changes, update the ServiceNow Business Rule endpoint.
 
 ## ServiceNow Business Rule
 
@@ -277,7 +270,7 @@ The service keeps an in-memory set of processed ServiceNow incident `sys_id` val
 If the same incident is received more than once:
 
 - the first request is accepted as new
-- later requests with the same `incident_sys_id` are marked as duplicates
+- later requests with the same `incident_sys_id` are ignored as duplicates
 
 The duplicate guard is stored only in memory and resets if the Python service restarts.
 
@@ -360,6 +353,37 @@ The prompt defines:
 - JSON output requirements
 - the incident and knowledge-base placeholders
 
+## ServiceNow Write-Back
+
+Gemini produces exactly one decision.
+
+### `respond`
+
+The solution is written back to the incident and the ticket is resolved.
+
+Fields used:
+
+- `work_notes`
+- `close_notes`
+- `state = 6`
+- `close_code = "Solution provided"`
+
+### `ask`
+
+A short clarification question is written to:
+
+- `comments`
+
+This makes the question customer-visible.
+
+### `escalate`
+
+The escalation reason is written to:
+
+- `work_notes`
+
+This keeps the message internal for the support team.
+
 ## Decision Tests
 
 The required test incidents are stored in:
@@ -389,79 +413,20 @@ Passed: 3
 Failed: 0
 ```
 
-## Current Testing
+## Validation
 
-### Valid Payload
+The project was validated for:
 
-A valid ServiceNow incident should return:
-
-```text
-202 Accepted
-```
-
-### Invalid Payload
-
-A payload that is missing a required field should return a FastAPI validation error while the application remains running.
-
-### Duplicate Payload
-
-The first request with a new `incident_sys_id` should return:
-
-```json
-{
-  "status": "accepted"
-}
-```
-
-Sending the same `incident_sys_id` again should return:
-
-```json
-{
-  "status": "duplicate"
-}
-```
-
-### ServiceNow Integration
-
-A new incident created in ServiceNow follows this path:
-
-```text
-ServiceNow
-    ↓
-Business Rule
-    ↓
-ngrok
-    ↓
-FastAPI /webhook
-    ↓
-Payload Validation
-    ↓
-Duplicate Guard
-    ↓
-Background Processing
-    ↓
-Gemini Decision
-```
-
-The ServiceNow → ngrok → FastAPI connection has been tested successfully.
-
-### Gemini Decision Testing
-
-The current decision engine is tested against the three required cases:
-
-```text
-Printer issue
-    ↓
-respond
-
-Vague email issue
-    ↓
-ask
-
-Annual leave request
-    ↓
-escalate
-```
+- valid webhook payload → `202 Accepted`
+- missing required field → `422`
+- priority outside `1–5` → `422`
+- duplicate incident → ignored after first processing
+- webhook returns quickly while Gemini runs in the background
+- Gemini decision tests → `3 passed, 0 failed`
+- printer incident → `respond` → resolved
+- vague email incident → `ask` → customer-visible comment
+- annual leave request → `escalate` → internal work note
+- ServiceNow → FastAPI → Gemini → ServiceNow full automatic loop
 
 ## Environment Variables
 
@@ -505,14 +470,3 @@ Do not commit:
 - ngrok authentication tokens
 
 Sensitive values should only be stored locally in environment variables.
-
-## Next Steps
-
-Phase 4 will add:
-
-- ServiceNow REST API write-back
-- writing Gemini decisions to the same ServiceNow incident
-- work notes and assignment updates
-- complete end-to-end flow
-- final integration testing
-- final architecture documentation
